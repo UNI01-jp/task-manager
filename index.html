@@ -451,7 +451,10 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       return !Array.isArray(r.days) || r.days.length === 7 || r.days.indexOf(wd) >= 0;
     });
   }
-  function doneCountFor(k){ return (state.log[k]||[]).length + (state.rlog[k]||[]).length; }
+  function doneCountFor(k){
+    var validR = (state.rlog[k]||[]).filter(function(id){ return state.routines.some(function(r){ return r.id === id; }); });
+    return (state.log[k]||[]).length + validR.length;
+  }
 
   /* 期限のあるものを先に、近い順。それ以外は入れた順 */
   function sortedInbox(){
@@ -829,7 +832,11 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       }
       render(); save();
     } else if((id = b.getAttribute("data-rdel"))){
-      state.routines = state.routines.filter(function(r){ return r.id !== id; }); render(); save();
+      state.routines = state.routines.filter(function(r){ return r.id !== id; });
+      Object.keys(state.rlog).forEach(function(k){
+        state.rlog[k] = (state.rlog[k]||[]).filter(function(x){ return x !== id; });
+      });
+      render(); save();
     } else if((id = b.getAttribute("data-pdel"))){
       state.projects = state.projects.filter(function(p){ return p.id !== id; }); render(); save();
     } else if((id = b.getAttribute("data-rday"))){
