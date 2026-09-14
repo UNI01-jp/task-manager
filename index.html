@@ -232,6 +232,9 @@
   .login-card .btn-main{width:100%;margin-top:18px;padding:10px;font-size:14px}
   .login-error{margin-top:12px;font-size:12.5px;color:var(--alert)}
   .login-error:empty{display:none}
+  .login-info{margin-top:12px;font-size:12.5px;color:var(--done)}
+  .login-info:empty{display:none}
+  .login-switch{margin-top:16px;text-align:center}
 </style>
 </head>
 <body>
@@ -243,8 +246,12 @@
     <input id="loginEmail" type="email" autocomplete="username" required>
     <label for="loginPassword">パスワード</label>
     <input id="loginPassword" type="password" autocomplete="current-password" required>
-    <button class="btn-main" type="submit">ログイン</button>
+    <button class="btn-main" type="submit" id="loginSubmitBtn">ログイン</button>
     <div class="login-error" id="loginError"></div>
+    <div class="login-info" id="loginInfo"></div>
+    <div class="login-switch">
+      <button class="link-btn" type="button" id="modeSwitchBtn" data-act="switch-mode">アカウントを作る</button>
+    </div>
   </form>
 </div>
 
@@ -460,17 +467,17 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     });
   }
 
-  var saving = false, pending = false, localRev = 0;
+  var saving = false, pending = false, localRev = 0, currentUserId = null;
 
   async function save(){
-    if(!supabaseReady){ setStatus("この画面では保存できません。開き直すと直ることがあります。"); return; }
+    if(!supabaseReady || !currentUserId){ setStatus("この画面では保存できません。開き直すと直ることがあります。"); return; }
     if(saving){ pending = true; return; }
     saving = true; prune(); localRev++;
     var payload = { inbox:state.inbox, today:state.today, log:state.log,
       routines:state.routines, rlog:state.rlog, projects:state.projects,
       lastDay:state.lastDay, lastWeekly:state.lastWeekly, plan:state.plan, rev:localRev };
     try{
-      var res = await supabase.from("app_state").upsert({ id:"board", data: payload, updated_at: new Date().toISOString() });
+      var res = await supabase.from("app_state").upsert({ user_id:currentUserId, data: payload, updated_at: new Date().toISOString() });
       if(res.error) throw res.error;
       setStatus("");
       var s = document.getElementById("savedAt");
@@ -903,35 +910,70 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
   var supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var supabaseReady = true;
   var storageStarted = false;
+  var authMode = "login"; /* "login" or "signup" */
 
-  function showApp(){
+  function showApp(session){
+    currentUserId = session.user.id;
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("app").style.display = "";
     if(!storageStarted){ storageStarted = true; initStorage(); }
   }
-  function showLogin(msg){
+  function showLogin(msg, info){
     document.getElementById("app").style.display = "none";
     document.getElementById("loginScreen").style.display = "flex";
     var e = document.getElementById("loginError");
     if(e) e.textContent = msg || "";
+    var i = document.getElementById("loginInfo");
+    if(i) i.textContent = info || "";
   }
 
   var loginForm = document.getElementById("loginForm");
+  var modeBtn = document.getElementById("modeSwitchBtn");
+  var submitBtn = document.getElementById("loginSubmitBtn");
+
+  function applyMode(){
+    if(authMode === "signup"){
+      submitBtn.textContent = "アカウントを作る";
+      modeBtn.textContent = "ログインする方はこちら";
+    } else {
+      submitBtn.textContent = "ログイン";
+      modeBtn.textContent = "アカウントを作る";
+    }
+  }
+
+  if(modeBtn){
+    modeBtn.addEventListener("click", function(){
+      authMode = (authMode === "signup") ? "login" : "signup";
+      applyMode();
+      showLogin();
+    });
+  }
+
   if(loginForm){
     loginForm.addEventListener("submit", async function(e){
       e.preventDefault();
       var email = document.getElementById("loginEmail").value.trim();
       var pass = document.getElementById("loginPassword").value;
-      var btn = loginForm.querySelector("button[type=submit]");
-      btn.disabled = true;
+      submitBtn.disabled = true;
       try{
-        var res = await supabase.auth.signInWithPassword({ email: email, password: pass });
-        if(res.error) throw res.error;
-        /* onAuthStateChange が showApp() を呼ぶ */
+        if(authMode === "signup"){
+          var res = await supabase.auth.signUp({ email: email, password: pass });
+          if(res.error) throw res.error;
+          if(res.data && res.data.session){
+            /* メール確認が不要な設定の場合はそのままログイン扱いになる */
+          } else {
+            showLogin("", "確認メールを送りました。メール内のリンクを開いてから、ログインしてください。");
+            authMode = "login"; applyMode();
+          }
+        } else {
+          var res2 = await supabase.auth.signInWithPassword({ email: email, password: pass });
+          if(res2.error) throw res2.error;
+          /* onAuthStateChange が showApp() を呼ぶ */
+        }
       }catch(err){
-        showLogin((err && err.message) || "ログインできませんでした");
+        showLogin((err && err.message) || "処理できませんでした");
       }finally{
-        btn.disabled = false;
+        submitBtn.disabled = false;
       }
     });
   }
@@ -943,11 +985,13 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     }
   });
 
+  applyMode();
+
   supabase.auth.onAuthStateChange(function(event, session){
-    if(session){ showApp(); } else { showLogin(); }
+    if(session){ showApp(session); } else { currentUserId = null; showLogin(); }
   });
   supabase.auth.getSession().then(function(res){
-    if(res.data && res.data.session){ showApp(); } else { showLogin(); }
+    if(res.data && res.data.session){ showApp(res.data.session); } else { showLogin(); }
   });
 
   function applyIncoming(v){
@@ -974,7 +1018,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     try{
       setStatus("");
 
-      var sel = await supabase.from("app_state").select("data").eq("id","board").maybeSingle();
+      var sel = await supabase.from("app_state").select("data").eq("user_id", currentUserId).maybeSingle();
       if(sel.error) throw sel.error;
 
       if(sel.data && sel.data.data){
@@ -986,8 +1030,8 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         save();
       }
 
-      supabase.channel("app_state-board")
-        .on("postgres_changes", { event: "*", schema: "public", table: "app_state", filter: "id=eq.board" }, function(payload){
+      supabase.channel("app_state-" + currentUserId)
+        .on("postgres_changes", { event: "*", schema: "public", table: "app_state", filter: "user_id=eq." + currentUserId }, function(payload){
           var v = payload.new && payload.new.data;
           if(v) applyIncoming(v);
         })
