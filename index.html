@@ -1023,6 +1023,30 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     if(first && changed) save();
   }
 
+  /* Claudeの受け取り箱(claude_inbox)から取り出して、置き場に「🤖」付きで入れる。
+     取り出した行は表から消えるので、同じタスクが二重に入ることはない。 */
+  var pullingClaude = false;
+  async function pullClaudeInbox(){
+    if(!supabaseReady || !currentUserId || !loaded || pullingClaude) return;
+    pullingClaude = true;
+    try{
+      var res = await supabase.from("claude_inbox").delete().eq("user_id", currentUserId).select("text, created_at");
+      if(res.error) return;
+      var rows = (res.data || []).slice().sort(function(a,b){ return a.created_at < b.created_at ? -1 : 1; });
+      if(!rows.length) return;
+      rows.forEach(function(r){
+        var p = parseDue(r.text || "");
+        if(!p.text) return;
+        state.inbox.push({ id:uid(), text:"🤖 " + p.text, due:p.due, skips:0, at:Date.now() });
+      });
+      render(); save();
+    }catch(e){
+      /* 受け取り箱が使えなくても、アプリのほかの機能には影響させない */
+    }finally{
+      pullingClaude = false;
+    }
+  }
+
   async function initStorage(){
     try{
       setStatus("");
@@ -1045,6 +1069,17 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
           if(v) applyIncoming(v);
         })
         .subscribe();
+
+      /* Claudeが追加したタスクを置き場へ移す */
+      pullClaudeInbox();
+      supabase.channel("claude_inbox-" + currentUserId)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "claude_inbox", filter: "user_id=eq." + currentUserId }, function(){
+          pullClaudeInbox();
+        })
+        .subscribe();
+      document.addEventListener("visibilitychange", function(){
+        if(document.visibilityState === "visible") pullClaudeInbox();
+      });
 
     }catch(e){
       setStatus("同期を開始できませんでした(" + ((e&&e.message)||"不明") + ")。開き直してください。");
