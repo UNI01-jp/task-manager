@@ -100,6 +100,10 @@
   }
   .inbox-list .note,#rList .note{margin:0 0 12px 31px}
   .note-body{white-space:pre-wrap;word-break:break-word}
+  .note-link{color:var(--accent);text-decoration:underline;word-break:break-all}
+  .r-move{display:flex;gap:2px;flex:none}
+  .btn-move{border:none;color:var(--muted);font-size:14px;padding:2px 5px;line-height:1.2}
+  .btn-move:disabled{opacity:.25;cursor:default}
   .note-actions{display:flex;gap:10px;align-items:center;margin-top:8px}
   .note textarea{
     width:100%;min-height:120px;font-family:inherit;font-size:13.5px;line-height:1.8;
@@ -522,6 +526,18 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     return '<span class="chip due' + (d !== null && d <= 2 ? ' near' : '') + '">' + esc(due) + (d === 0 ? ' 今日' : (d !== null && d < 0 ? ' 超過' : '')) + '</span>';
   }
   function skipChip(n){ return (n && n >= SKIP_ALERT) ? '<span class="chip skip">見送り' + n + '</span>' : ""; }
+  /* 内容の中のURLを、押すと新しいタブで開くリンクにする(それ以外の文字はこれまでどおりエスケープ) */
+  function linkify(s){
+    var re = /https?:\/\/[^\s<>"'（）「」、。]+/g, out = "", last = 0, m;
+    while((m = re.exec(s))){
+      var url = m[0].replace(/[.,!?)\]]+$/, "");
+      out += esc(s.slice(last, m.index))
+        + '<a class="note-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
+      last = m.index + url.length;
+      re.lastIndex = last;
+    }
+    return out + esc(s.slice(last));
+  }
   function noteChip(it){ return it.note ? '<span class="chip">内容</span>' : ""; }
 
   function findItem(id){
@@ -538,7 +554,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
     }
     if(openNote !== it.id) return "";
     return '<div class="note">'
-      + (it.note ? '<div class="note-body">' + esc(it.note) + '</div>'
+      + (it.note ? '<div class="note-body">' + linkify(it.note) + '</div>'
                  : '<div class="note-body" style="color:var(--muted)">まだ何も書かれていません。</div>')
       + '<div class="note-actions"><button class="link-btn" data-nedit="' + it.id + '" type="button">'
       + (it.note ? '書き換える' : '内容を書く') + '</button></div></div>';
@@ -595,7 +611,10 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
       if(editingRoutines){
         html += '<div class="days">';
         for (var i=0;i<7;i++) html += '<button class="day-t' + (days.indexOf(i)>=0 ? ' on' : '') + '" data-rday="' + r.id + ':' + i + '" type="button">' + WD[i] + '</button>';
-        html += '</div><button class="btn btn-x" data-rdel="' + r.id + '" type="button" aria-label="削除">×</button>';
+        html += '</div><div class="r-move">'
+          + '<button class="btn btn-move" data-rup="' + r.id + '" type="button" aria-label="上へ"' + (state.routines[0] === r ? ' disabled' : '') + '>↑</button>'
+          + '<button class="btn btn-move" data-rdown="' + r.id + '" type="button" aria-label="下へ"' + (state.routines[state.routines.length-1] === r ? ' disabled' : '') + '>↓</button>'
+          + '</div><button class="btn btn-x" data-rdel="' + r.id + '" type="button" aria-label="削除">×</button>';
       }
       html += '</div>' + noteBlock(r) + '</div>';
     });
@@ -830,6 +849,13 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
         state.rlog[rk].push(id);
         state.routines.forEach(function(r){ if(r.id === id) r.lastAt = Date.now(); });
       }
+      render(); save();
+    } else if((id = b.getAttribute("data-rup")) || (id = b.getAttribute("data-rdown"))){
+      var from = state.routines.findIndex(function(r){ return r.id === id; });
+      var to = from + (b.hasAttribute("data-rup") ? -1 : 1);
+      if(from < 0 || to < 0 || to >= state.routines.length) return;
+      var moved = state.routines.splice(from, 1)[0];
+      state.routines.splice(to, 0, moved);
       render(); save();
     } else if((id = b.getAttribute("data-rdel"))){
       state.routines = state.routines.filter(function(r){ return r.id !== id; });
